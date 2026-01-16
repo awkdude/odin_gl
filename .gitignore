@@ -1,0 +1,7 @@
+Makefile
+*.vs
+*.cap
+*.awk
+*.exe
+*.pdb
+*.sln
