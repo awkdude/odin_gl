@@ -24,6 +24,7 @@ sdl_set_proc_address :: proc(p: rawptr, name: cstring) {
 } 
 
 main :: proc() {
+// {{{
     context.logger = log.create_console_logger()
     context.logger.options -= {.Date}
     if !sdl.Init({.VIDEO, .EVENTS, .GAMEPAD}) {
@@ -76,6 +77,7 @@ main :: proc() {
         if !src.game_update_render( U) do return
         sdl.GL_SwapWindow(sdl_window)
     }
+// }}}
 }
 
 set_gamepad_rumble_sdl :: proc(weak, strong: f32) {

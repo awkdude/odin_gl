@@ -2,12 +2,13 @@ package dbgui
 
 import "odinlib:util"
 import "core:math"
+import "core:log"
 import "core:unicode/utf8"
 import gl "vendor:OpenGL"
 
 Slider :: struct {
-    value, min_value, max_value: int,
-    color: Color3f,
+    value, min_value, max_value: f32,
+    color: Color4f,
 }
 
 slider :: proc(
@@ -15,22 +16,23 @@ slider :: proc(
     label: string,
     value: ^f32,
     min_value, max_value: f32,
-    _color: Maybe(Color3f) = nil,
+    _color: Maybe(Color4f) = nil,
 )
 {
-// {{{
+// {{
     prologue()
     using current_context
     assert(current_context != nil, "No gui context set")
     id := new_id(id, label)
+    slider_value := math.clamp(value^, min_value, max_value)
     create_control(id, Control {
         label=label,
         type=.Slider,
         slider={
-            value=cast(int)value^,
-            min_value=cast(int)min_value,
-            max_value=cast(int)max_value,
-            color=_color.? or_else Color3f{1.0, 0.0, 1.0},
+            value=slider_value,
+            min_value=min_value,
+            max_value=max_value,
+            color=_color.? or_else color_red,
         },
     })
 // }}}
@@ -50,6 +52,7 @@ slider_render :: proc(id: ID_Type) -> Rectf {
     }
     renderer_flush(&renderer)
     gl.Disable(gl.DEPTH_TEST)
+    defer gl.Enable(gl.DEPTH_TEST)
     renderer.depth = 0.0
     renderer_push_quad(
         &renderer,
@@ -57,9 +60,9 @@ slider_render :: proc(id: ID_Type) -> Rectf {
         Color4f { 0.5, 0.5, 0.5, 0.5 }
     )
     v := util.normalize_to_range(
-        cast(f32)control.slider.value,
-        cast(f32)control.slider.min_value,
-        cast(f32)control.slider.max_value,
+        control.slider.value,
+        control.slider.min_value,
+        control.slider.max_value,
         0.0,
         1.0
     )
@@ -69,15 +72,9 @@ slider_render :: proc(id: ID_Type) -> Rectf {
     renderer_push_quad(
         &renderer,
         fill_rect,
-        Color4f { 
-            control.slider.color.r,
-            control.slider.color.g,
-            control.slider.color.b,
-            1.0
-        }
+        control.slider.color,
     )
     renderer_flush(&renderer)
-    gl.Enable(gl.DEPTH_TEST)
 
     return util.union_rect(text_rect, slider_rect)
 // }}}
@@ -103,7 +100,7 @@ slider_handle_event :: proc(
             cast(f32)control.slider.min_value,
             cast(f32)control.slider.max_value
         )
-        control.slider.value = cast(int)math.round(slider_f)
+        control.slider.value = math.round(slider_f)
     }
     #partial switch event.type {
     case .Mouse_Button:

@@ -15,8 +15,8 @@ import "base:sanitizer"
 import gl "vendor:OpenGL"
 import sa "core:container/small_array"
 
-vec2 :: util.vec2
-vec2f :: util.vec2f
+vec2    :: util.vec2
+vec2f   :: util.vec2f
 Color3f :: util.Color3f
 
 Result_Type :: enum {
@@ -78,7 +78,7 @@ Context :: struct {
     font_path: string,
     font_size_dip: i32,
     scroll_offset: vec2f,
-    control_rect: Rectf,
+    control_union_rect: Rectf,
     hover_id, active_id: ID_Type,
     name_store: map[ID_Type]int,
     flags: bit_set[Flag],
@@ -126,12 +126,13 @@ context_init :: proc(
     ctx: ^Context, 
     font_path: string,
     font_size_dip: i32,
-    display_dpi: i32 = 0) -> Font_Error
+    display_dpi: i32 = 0)
 {
+// {{{
     ctx^ = {}
     assert(renderer_init(&ctx.renderer))
     ctx.char_map = make(map[rune]Character, 128)
-    set_font(ctx, font_path, font_size_dip, display_dpi) or_return
+    set_font(ctx, font_path, font_size_dip, display_dpi)
     ctx.text_color = {1.0, 1.0, 1.0, 1.0}
     ctx.padding = {20, 20}
     ctx.pen_position = ctx.padding
@@ -139,10 +140,7 @@ context_init :: proc(
     ctx.old_pool = &ctx.control_pools[1]
     ctx.control_map = &ctx.control_maps[0]
     ctx.old_control_map = &ctx.control_maps[1]
-    // Sanitizing parent stack?
-    slice := mem.slice_ptr(raw_data(sa.slice(&ctx.parent_stack)), sa.cap(ctx.parent_stack))
-    sanitizer.address_poison(slice)
-    return nil
+// }}}
 }
 
 Update :: struct {
@@ -150,12 +148,52 @@ Update :: struct {
     window_size: util.vec2,
 }
 
-advance_pen :: proc(rect: Rectf, advance_x: f32 = 0.0) {
+advance_pen :: proc(rect: Rectf, indent: f32 = 1.0) {
     using current_context
-    control_rect.w = max(control_rect.w, rect.w)
-    pen_position.x = padding.x * advance_x
+    control_union_rect.w = max(control_union_rect.w, rect.w)
+    pen_position.x = padding.x * indent
     pen_position.y += rect.h + padding.y
-    control_rect.h += rect.h + padding.y
+    control_union_rect.h += rect.h + padding.y
+}
+
+render_layout :: proc() {
+// {{{
+    using current_context
+    render_control :: proc(control: ^Control, indent: f32 = 1.0) {
+    // {{{
+        indent := indent
+        render_proc := control_type_info_table[control.type].render_proc
+        if render_proc != nil {
+            control.rect = render_proc(control.id)
+        }
+        advance_pen(control.rect, indent)
+        if len(control.children) > 0 {
+            indent += 1.0
+            for &child in control.children {
+                render_control(&child, indent)
+            }
+            indent -= 1.0
+        }
+    // }}}
+    }
+    projection_mat := linalg.matrix_ortho3d(
+        0.0,
+        cast(f32)window_size.x,
+        cast(f32)window_size.y,
+        0.0,
+        -1.0,
+        1.0
+    )
+    renderer_begin_frame(&renderer, projection_mat)
+    if sa.len(current_pool^) > 0 {
+        render_control(sa.get_ptr(current_pool, 0))
+    }
+    renderer_push_outline_rect(&renderer, control_union_rect, color_yellow)
+    if hovered_control, is_hover := get_by_id(hover_id); is_hover {
+        renderer_push_outline_rect(&renderer, hovered_control.rect, color_yellow)
+    }
+    renderer_end_frame(&renderer)
+// }}}
 }
 
 begin :: proc(ctx: ^Context, U: Update, _input: ^util.Input_State) {
@@ -167,61 +205,41 @@ begin :: proc(ctx: ^Context, U: Update, _input: ^util.Input_State) {
     flags += {.Began}
     input = _input
     window_size = U.window_size 
-    print_parent_stack()
-    if .Mouse_Moved in flags {
+    render_layout()
+    if .Mouse_Moved in flags && frame_index > 0 {
+        defer flags -= {.Mouse_Moved}
+        hovered_id := NIL_ID
         dfs_stack := make_dfs_stack()
         root_control, ok := sa.get_ptr_safe(current_pool, 0)
-        if !ok do return
         append(&dfs_stack, root_control)
         for len(&dfs_stack) > 0 {
             control := pop(&dfs_stack)
-            log.debugf(name(control.id))
             mouse_pos := vec2f {
                 cast(f32)input.mouse_position.x,
                 cast(f32)input.mouse_position.y
             }
             if util.point_in_rect(mouse_pos, control.rect) {
-                set_hover(ctx, control.id)
-                break
+                hovered_id = control.id
+                if len(control.children) > 0 {
+                    for &child in control.children {
+                        append(&dfs_stack, &child)
+                    }
+                } else {
+                    break
+                }
             }
         }
-        flags -= {.Mouse_Moved}
+        set_hover(ctx, hovered_id)
     }
-    // render {{{
-    projection_mat := linalg.matrix_ortho3d(
-        0.0,
-        cast(f32)window_size.x,
-        cast(f32)window_size.y,
-        0.0,
-        -1.0,
-        1.0
-    )
-    renderer_begin_frame(&renderer, projection_mat)
-    dfs_stack := make_dfs_stack() 
-    append(&dfs_stack, sa.get_ptr(current_pool, 0))
-    for len(dfs_stack) > 0 {
-        control := pop(&dfs_stack)
-        control_rect: Rectf
-        render_proc := control_type_info_table[control.type].render_proc
-        if render_proc != nil {
-            control_rect = render_proc(control.id)
-        }
-        advance_pen(control_rect )
-        #reverse for &child in control.children {
-            append(&dfs_stack, &child)
-        }
-    }
-    renderer_end_frame(&renderer)
-    // }}}
     assert(sa.len(parent_stack) == 0, "Parent stack wasn't clear")
-    sa.clear(&parent_stack)
+    // Buffer swap for next frame
     current_pool, old_pool = old_pool, current_pool
     sa.clear(current_pool)
     control_map, old_control_map = old_control_map, control_map
     clear(control_map)
     pen_position = padding - scroll_offset
-    control_rect = Rectf{x=padding.x, y=padding.y}
-    begin_treenode(GEN_ID, "MENU")
+    control_union_rect = Rectf{x=padding.x, y=padding.y}
+    begin_treenode(GEN_ID, "MENU", true)
 // }}}
 }
 
@@ -244,8 +262,6 @@ end :: proc() {
         }
         log.panicf("[%v] weren't closed (frame: %v)", strings.to_string(builder), frame_index)
     }
-    renderer_push_outline_rect(&renderer, control_rect, {1.0, 0.0, 1.0, 1.0})
-    renderer_end_frame(&renderer)
     frame_index += 1
     current_context = nil
 // }}}
@@ -255,7 +271,7 @@ set_font :: proc(
     ctx: ^Context,
     font_path: string,
     font_size_dip: i32,
-    display_dpi: i32 = 0) -> Font_Error  
+    display_dpi: i32 = 0)
 {
 // {{{
     for _, ch in ctx.char_map {
@@ -327,26 +343,11 @@ set_font :: proc(
     add_glyph(ctx, ARROW_DOWN_RUNE)
     ctx.font_path = font_path
     ctx.font_size_dip = font_size_dip
-    return nil
 // }}}
 }
 
-// measure_string_rect :: proc(ctx: ^Context, str: string, scale) -> Rect {
-//     x, w, h: f32
-//     for r in utf8.string_to_runes(str, allocator) {
-//         ch, ok := char_map[r]
-//         assert(ok)
-//         x = cast(f32)ch.bearing.x * scale
-//         y := cast(f32)(pen_position.y) - cast(f32)(ch.bearing.y) * scale
-//         w += cast(f32)ch.size.x * scale
-//         h += cast(f32)ch.size.y * scale
-//         x += cast(i32)(cast(f32)(ch.advance >> 6) * scale)
-//     }
-//
-// }
-
-// set state {{{
 set_hover :: proc(using ctx: ^Context, id: ID_Type) {
+// {{{
     if id != hover_id {
         if id != NIL_ID {
             log.debugf("Hover set to %s", name(id))
@@ -355,9 +356,11 @@ set_hover :: proc(using ctx: ^Context, id: ID_Type) {
         }
     }
     hover_id = id
+// }}}
 }
 
 set_active :: proc(using ctx: ^Context, id: ID_Type) {
+// {{{
     if id != active_id {
         if id != NIL_ID {
             log.debugf("Active set to %s", name(id))
@@ -366,17 +369,17 @@ set_active :: proc(using ctx: ^Context, id: ID_Type) {
         }
     }
     active_id = id
-}
 // }}}
+}
 
 make_dfs_stack :: proc() -> [dynamic]^Control {
     @(static) stack_buf: [256]^Control
+    slice.zero(stack_buf[:])
     return mem.buffer_from_slice(stack_buf[:])
 }
 
 // NOTE: Don't change input state here
 context_handle_event :: proc(using ctx: ^Context, event: util.Window_Event) {
-    when true do return
 // {{{
     if active_id != NIL_ID {
         active_control := get_by_id(active_id)
@@ -400,7 +403,7 @@ context_handle_event :: proc(using ctx: ^Context, event: util.Window_Event) {
         scroll_offset.y = math.clamp(
             scroll_offset.y,
             0,
-            max(0, control_rect.h - cast(f32)window_size.y)
+            max(0, control_union_rect.h - cast(f32)window_size.y)
         )
         log.debugf("Scroll offset: %v", scroll_offset)
     case .Char_Input:

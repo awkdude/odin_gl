@@ -120,11 +120,14 @@ _node_gltf :: proc(scene: ^Scene, node: ^cgltf.node) {
         //     node.rotation[2],
         // }
         yaw, pitch: f32
-        rotation := linalg.quaternion_angle_axis(node.rotation[3], [3]f32{
-            node.rotation[0],
-            node.rotation[1],
-            node.rotation[2],
-        })
+        rotation := linalg.quaternion_angle_axis(
+            node.rotation[3],
+            vec3f {
+                node.rotation[0],
+                node.rotation[1],
+                node.rotation[2],
+            }
+        )
         // NOTE: Use this maybe?
         // rotation := quaternion(
         //     node.rotation[3],
@@ -150,6 +153,11 @@ _node_gltf :: proc(scene: ^Scene, node: ^cgltf.node) {
         entity.camera.up = {0.0, 1.0, 0.0}
         entity.camera.front = linalg.vector_normalize0(direction)
     } 
+    when USE_QUATERNIONS {
+        entity.rotation = linalg.quaternion_from_pitch_yaw_roll_f32(0.0, 0.0, 0.0)
+    } else {
+        entity.rotation = {0.0, 0.0, 0.0}
+    }
     log.debugf("Rotation: %v", entity.rotation)
     if node.has_scale {
         entity.transform.scale = node.scale
@@ -165,7 +173,15 @@ _node_gltf :: proc(scene: ^Scene, node: ^cgltf.node) {
         set_resource_name(Entity, entity_id, "light")
     } else if .Camera in entity_ptr.component_flags {
         set_resource_name(Entity, entity_id, "camera")
-        entity_ptr.transform.rotation = {-0.44, 3.76, 0}
+        when USE_QUATERNIONS {
+            entity_ptr.transform.rotation = linalg.quaternion_from_pitch_yaw_roll_f32(
+                -0.44,
+                3.76,
+                0
+            )
+        } else {
+            entity_ptr.transform.rotation = {-0.44, 3.76, 0}
+        }
     }
     entity_ptr.reset_transform = entity_ptr.transform
 }

@@ -14,8 +14,9 @@ import "core:slice"
 */
 
 Control_Type :: enum {
+    None,
     Text,
-    Tree,
+    Treenode,
     Button,
     Toggle,
     Slider,
@@ -36,7 +37,8 @@ Control :: struct {
         slider: Slider,
         toggle: Toggle,
         textbox: Textbox, 
-        tree: Tree,
+        treenode: Treenode,
+        text: Text,
     },
     rect: Rectf,
     result: Result,
@@ -49,23 +51,51 @@ Control_Type_Info :: struct {
     render_proc: proc(id: ID_Type) -> Rectf,
 }
 
+stub_render :: proc(id: ID_Type) -> Rectf { return {} }
+stub_handle_event :: proc(ctx: ^Context, id: ID_Type, event: util.Window_Event) {}
+
 control_type_info_table := #partial [Control_Type]Control_Type_Info {
+    .Text = {
+        handle_event_proc=stub_handle_event,
+        render_proc=text_render,
+    },
     .Slider = {
         handle_event_proc=slider_handle_event,
         render_proc=slider_render,
     },
+    .Treenode = {
+        handle_event_proc=treenode_handle_event,
+        render_proc=treenode_render,
+    },
+    .Button = {
+        handle_event_proc=stub_handle_event,
+        render_proc=stub_render,
+    },
+    .Toggle = {
+        handle_event_proc=stub_handle_event,
+        render_proc=stub_render,
+    },
+    .Textbox = {
+        handle_event_proc=stub_handle_event,
+        render_proc=stub_render,
+    },
 }
 
-create_control :: proc(id: ID_Type, control: Control) -> int {
+create_control :: proc(id: ID_Type, control: Control) -> (index: int, is_root: bool) #optional_ok {
     using current_context
     control := control
     control.id = id
     assert(sa.push_back(current_pool, control), "Control pool full!")
-    index := sa.len(current_pool^) - 1
+    index = sa.len(current_pool^) - 1
     control_map[id] = index
+
     parent_info, ok := sa.get_ptr_safe(&parent_stack, sa.len(parent_stack) - 1)
     if !ok {
-        assert(control.type == .Tree, "First control must be a treenode")
+        log.assertf(
+            control.type == .Treenode,
+            "First control must be a treenode (This type is %v)", 
+            control.type
+        )
         assert(
             sa.push_back(
                 &current_context.parent_stack,
@@ -77,9 +107,10 @@ create_control :: proc(id: ID_Type, control: Control) -> int {
             "Parent stack is full!"
         )
         parent_info, ok = sa.get_ptr_safe(&parent_stack, sa.len(parent_stack) - 1)
+        is_root = true
     }
     parent_info.child_count += 1
-    return index
+    return
 }
 
 
@@ -100,8 +131,8 @@ draw_text :: proc(offset: vec2f, text: string) -> Rectf {
     offset := offset
     pen := offset
     for r in utf8.string_to_runes(text, context.temp_allocator) {
-        ch, ok := char_map[r]
-        assert(ok)
+        ch, ok := char_map[r] // TODO: or_continue
+        log.assertf(ok, "Could not print '{0:c} ({0:d})'", r)
         rect := Rectf {
             x=pen.x + ch.bearing.x,
             y=pen.y - ch.bearing.y,
@@ -111,8 +142,7 @@ draw_text :: proc(offset: vec2f, text: string) -> Rectf {
         offset.y = min(offset.y, rect.y)
         renderer_push_quad(&renderer, rect, text_color, ch.tex_id)
         renderer_push_quad(&renderer, rect, text_color)
-        // renderer_push_outline_rect(&renderer, rect, Color4f{1.0, 1.0, 0.0, 1.0})
-        pen.x += (cast(f32)(ch.advance >> 6))
+        pen.x += cast(f32)(ch.advance >> 6)
         max_height = max(max_height, ch.size.y + abs(ch.size.y - ch.bearing.y))
     }
     return Rectf {
@@ -123,43 +153,3 @@ draw_text :: proc(offset: vec2f, text: string) -> Rectf {
     }
 // }}} 
 }
-
-// controls {{{
-
-text :: proc(
-    id: ID_Type,
-    fmt_string: string,
-    args: ..any) 
-{
-// {{{
-    using current_context
-    assert(current_context != nil, "No gui context set")
-    create_control(new_id(id, fmt_string), {})
-    str := fmt.tprintf(fmt_string, ..args)
-    scale: f32 = 1.0
-    control_rect.w = max(control_rect.w, pen_position.x)
-    pen_position.x = padding.x
-    max_height: f32 = 0
-    runes := utf8.string_to_runes(str, context.temp_allocator)
-    for r in runes {
-        ch, ok := char_map[r]
-        assert(ok)
-        x, y := pen_position.x, pen_position.y
-        w, h := ch.size.x, ch.size.y
-        rect := Rectf {
-            x=cast(f32)pen_position.x + cast(f32)ch.bearing.x * scale,
-            y=cast(f32)(pen_position.y) - cast(f32)(ch.bearing.y) * scale,
-            w=cast(f32)ch.size.x * scale,
-            h=cast(f32)ch.size.y * scale,
-        }
-        renderer_push_quad(&renderer, rect, text_color, ch.tex_id)
-        renderer_push_quad(&renderer, rect, text_color)
-        pen_position.x += (cast(f32)(ch.advance >> 6) * scale)
-        max_height = max(max_height, h)
-    }
-    pen_position.y += max_height + padding.y
-    control_rect.h += max_height + padding.y
-    // log.debugf("Text dimensions: %v", vec2{pen_position.x, max_height})
-// }}}
-}
-// }}}

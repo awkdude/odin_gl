@@ -51,6 +51,7 @@ get_white_tex_id :: proc() -> u32 {
 
 renderer_init :: proc(using renderer: ^Renderer) -> bool {
 // {{{
+    renderer^ = {}
     gl.GenVertexArrays(1, &vao)
     gl.BindVertexArray(vao)
     gl.GenBuffers(1, &vbo)

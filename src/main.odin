@@ -31,6 +31,8 @@ AXIS_YAW    :: 1 // rotates around y-axis
 AXIS_ROLL   :: 2 // rotates around z-axis
 RAD_PER_DEG :: cast(f32)math.RAD_PER_DEG
 DEG_PER_RAD :: cast(f32)math.DEG_PER_RAD
+FOV_MIN     :: 40.0 * RAD_PER_DEG
+FOV_MAX     :: 90.0 * RAD_PER_DEG
 
 ID_Type :: int
 NIL_ID: ID_Type : -1
@@ -69,7 +71,7 @@ Scene :: struct {
 }
 
 Game_Context :: struct {
-    clear_color: Color3f,
+    clear_color: Color4f,
     window_size: vec2,
     api: struct {
         push_platform_command: proc(_: util.Platform_Command),
@@ -108,12 +110,16 @@ game_init :: proc(I: util.Game_Init) -> bool {
     game.old_input = &game._inputs[1]
     gl.load_up_to(3, 3, I.gl_set_proc_address)
     DBGUI_FONT_PATH :: "resources/fonts/CASKAYDIACOVENERDFONT-REGULAR.TTF"
-    dbgui.context_init(
-        &game.dbgui_context,
-        DBGUI_FONT_PATH,
-        20,
-        game.api.get_window_dpi(),
-    )
+    when true {
+        dbgui.context_init(
+            &game.dbgui_context,
+            DBGUI_FONT_PATH,
+            20,
+            game.api.get_window_dpi(),
+        )
+    } else {
+        mu.init(&game.mu_ctx)
+    }
     game.api.push_platform_command(util.Platform_Command {
         type=.Change_Window_Icon,
         path="resources/opengl_logo.ico",
@@ -123,7 +129,7 @@ game_init :: proc(I: util.Game_Init) -> bool {
         size=util.vec2{400, 400},
     })
     game.window_size = I.window_size
-    mu.init(&game.mu_ctx)
+    game.clear_color = dbgui.color_coral
     gl.Viewport(0, 0, I.window_size.x, I.window_size.y)
     gl.Enable(gl.DEPTH_TEST)
     game.scene.entities = make_collection(Entity, 32)
@@ -192,7 +198,7 @@ game_init :: proc(I: util.Game_Init) -> bool {
     gl.CullFace(gl.FRONT if game.cull_front_face else gl.BACK)
     gl.FrontFace(gl.CCW)
 
-    return  true
+    return true
 // }}}
 } 
 
@@ -219,49 +225,46 @@ game_update_render :: proc(_U: util.Game_Update) -> bool {
         running = false
     }
     gl.Viewport(0, 0, window_size.x, window_size.y)
-    gl.ClearColor(0.0, 0.3, 0.4, 1.0)
+    gl.ClearColor(clear_color.r, clear_color.g, clear_color.b, 1.0)
     gl.Enable(gl.DEPTH_TEST)
     gl.StencilOp(gl.KEEP, gl.KEEP, gl.REPLACE)
     gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT)
     // gl.ActiveTexture(gl.TEXTURE0)
     // gl.BindTexture(gl.TEXTURE_2D, find_resource(Texture, "diffuse").id)
+    dbgui.begin(&dbgui_context, {window_size=window_size}, input)
     scene_update_render(&game.scene)
     // TODO: rename _parent to _treenode
-    when true {
-        dbgui.begin(&dbgui_context, {window_size=window_size}, input)
-        // dbgui.text(GEN_ID, "Hello, World!")
-        // dbgui.text(GEN_ID, "This is another string with %v", math.PI)
-        // dbgui.text(GEN_ID, "Frame Index: %v", frame_index)
-        // max_texture_units: i32
-        // gl.GetIntegerv(gl.MAX_TEXTURE_IMAGE_UNITS, &max_texture_units)
-        // dbgui.text(GEN_ID, "Max texture units: %v", max_texture_units)
-        // camera_ent := find_entity_with_component(.Camera)
-        // fov_deg: f32 = camera_ent.camera.fov * DEG_PER_RAD
-        // dbgui.slider(GEN_ID, "FOV", &fov_deg, 45.0, 90.0, 45)
-        // camera_ent.camera.fov = fov_deg * RAD_PER_DEG
-        // for i in 0..<20 {
-        //     buf: [8]u8
-        //     label := fmt.bprintf(buf[:], "%v", i)
-        //     dbgui.text(GEN_ID, label)
-        // }
-        // light_ent := find_entity_with_component(.Light)
-        // dbgui.begin_treenode(GEN_ID, "Light color")
-        // dbgui.slider(GEN_ID, "R", &light_ent.light.color.r, 0, 255, Color3f{1.0, 0.0, 0.0})
-        // dbgui.slider(GEN_ID, "G", &light_ent.light.color.g, 0, 255, Color3f{0.0, 1.0, 0.0})
-        // dbgui.slider(GEN_ID, "B", &light_ent.light.color.b, 0, 255, Color3f{1.0, 0.0, 1.0})
-        // dbgui.end_treenode()
-        dbgui.end()
-    } else {
-        mu.begin(&mu_ctx)
-        mu.begin_window(&mu_ctx, "My Window", mu.Rect{10, 10, 200, 200})
-        mu.layout_row(&mu_ctx, []i32{60, -1})
-        mu.label(&mu_ctx, "Hello, World!")
-        if .SUBMIT in mu.button(&mu_ctx, "Button") {
-            log.debug("microui button was pressed")
-        }
-        mu.end_window(&mu_ctx)
-        mu.end(&mu_ctx)
-    }
+    dbgui.text(dbgui.ID("frame_count"), "Frame Index: %v", frame_index)
+    // dbgui.text(GEN_ID, "This is another string with %v", math.PI)
+    max_texture_units: i32
+    gl.GetIntegerv(gl.MAX_TEXTURE_IMAGE_UNITS, &max_texture_units)
+    dbgui.text(GEN_ID, "Max texture units: %v", max_texture_units)
+    camera_ent := find_entity_with_component(.Camera)
+    fov_deg: f32 = camera_ent.camera.fov * DEG_PER_RAD
+    dbgui.slider(GEN_ID, "FOV", &fov_deg, FOV_MIN, FOV_MAX)
+    dbgui.text(GEN_ID, "FOV: %.2f", fov_deg)
+    camera_ent.camera.fov = fov_deg * RAD_PER_DEG
+    // for i in 0..<20 {
+    //     buf: [8]u8
+    //     label := fmt.bprintf(buf[:], "%v", i)
+    //     dbgui.text(GEN_ID, label)
+    // }
+    light_ent := find_entity_with_component(.Light)
+    dbgui.begin_treenode(GEN_ID, "Light color")
+    dbgui.slider(GEN_ID, "R", &light_ent.light.color.r, 0.0, 1.0, dbgui.color_red)
+    dbgui.slider(GEN_ID, "G", &light_ent.light.color.g, 0.0, 1.0, dbgui.color_green)
+    dbgui.slider(GEN_ID, "B", &light_ent.light.color.b, 0.0, 1.0, dbgui.color_blue)
+    dbgui.end_treenode()
+    dbgui.end()
+    // mu.begin(&mu_ctx)
+    // mu.begin_window(&mu_ctx, "My Window", mu.Rect{10, 10, 200, 200})
+    // mu.layout_row(&mu_ctx, []i32{60, -1})
+    // mu.label(&mu_ctx, "Hello, World!")
+    // if .SUBMIT in mu.button(&mu_ctx, "Button") {
+    //     log.debug("microui button was pressed")
+    // }
+    // mu.end_window(&mu_ctx)
+    // mu.end(&mu_ctx)
     // DELETE:
     old_input.transient = {}
     // FIXME:
@@ -284,8 +287,6 @@ control_camera :: proc(camera_ent: ^Entity) {
     using game
     speed: f32 = 0.04
     PITCH_ANGLE :: 60.0 * RAD_PER_DEG
-    FOV_MIN     :: 20.0 * RAD_PER_DEG
-    FOV_MAX     :: 90.0 * RAD_PER_DEG
 
     camera_ent.camera.right = linalg.cross(camera_ent.camera.front, camera_ent.camera.up)
     // if input_is_key_down( util.KEY_I) {
@@ -325,7 +326,22 @@ control_camera :: proc(camera_ent: ^Entity) {
     // )
     if old_pitch != pitch || old_yaw != yaw {
         // log.debugf("Rotation: %v", camera_ent.transform.rotation)
+        log.debugf(
+            "PITCH: %v, YAW: %v, FOV: %v",
+            pitch * DEG_PER_RAD,
+            yaw * DEG_PER_RAD,
+            camera_ent.camera.fov * DEG_PER_RAD,
+        )
     }
+    game.api.push_platform_command(util.Platform_Command {
+        type=.Rename_Window,
+        title=fmt.tprintf(
+            "PITCH: %v, YAW: %v, FOV: %v",
+            pitch * DEG_PER_RAD,
+            yaw * DEG_PER_RAD,
+            camera_ent.camera.fov * DEG_PER_RAD,
+        ),
+    })
     when USE_QUATERNIONS {
         camera_ent.transform.rotation = linalg.quaternion_from_pitch_yaw_roll(pitch, yaw, 0.0)
     } else {

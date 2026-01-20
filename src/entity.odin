@@ -19,6 +19,8 @@ Transform :: struct {
 }
 }
 
+mat4 :: util.mat4
+
 ID_CAMERA :: 0
 ID_LIGHT  :: 1
 ID_CUBE   :: 2
@@ -226,7 +228,21 @@ scene_update_render :: proc(using scene: ^Scene) {
         //     entity.orientation[1],
         //     entity.orientation[2],
         // )
-        model_mat := linalg.matrix4_from_trs(entity.position, 0, entity.scale)
+        model_mat: mat4
+        when USE_QUATERNIONS {
+            model_mat = linalg.matrix4_from_trs(entity.position, entity.rotation, entity.scale)
+        } else {
+            rotation := linalg.quaternion_from_pitch_yaw_roll_f32(
+                entity.rotation[AXIS_PITCH],
+                entity.rotation[AXIS_YAW],
+                0.0,
+            )
+            model_mat = linalg.matrix4_from_trs(
+                entity.position,
+                rotation,
+                entity.scale
+            )
+        }
         normal_mat := cast(matrix[3, 3]f32)linalg.inverse_transpose(model_mat)
         util.shader_uniform(shader_program, "u_normal_mat", &normal_mat)
         util.shader_uniform(shader_program, "u_model", &model_mat)
