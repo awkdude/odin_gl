@@ -83,6 +83,21 @@ main :: proc() {
         nil
     )
     assert(window_handle != nil)
+    window_handle = win.CreateWindowExW(
+        win.WS_EX_ACCEPTFILES,
+        app_name,
+        win.utf8_to_wstring(PRE_INIT_WINDOW_TITLE, context.temp_allocator), 
+        win.WS_OVERLAPPEDWINDOW,
+        win.CW_USEDEFAULT,
+        win.CW_USEDEFAULT,
+        PRE_INIT_WINDOW_SIZE.x,
+        PRE_INIT_WINDOW_SIZE.y,
+        nil,
+        nil,
+        program_instance,
+        nil
+    )
+    assert(window_handle != nil)
     win.ShowWindow(window_handle, win.SW_SHOW)
     win.UpdateWindow(window_handle)
     // }}}
@@ -439,7 +454,8 @@ window_proc :: proc "stdcall" (
     }
     if running {
         if event, ok := window_event.?; ok {
-            src.game_handle_event( event)
+            event.source_window = cast(util.Window_ID)window_handle
+            src.game_handle_event(event)
         }
     }
 

@@ -21,7 +21,7 @@ uniform bool u_is_selected;
 
 void main() {
     float ambient_strength = 0.1f;
-    vec3 ambient = ambient_strength * u_light.color;
+    vec3 ambient = vec3(ambient_strength);
     ambient *= vec3(texture(u_material.diffuse, v_tex_coords));
     vec3 norm = normalize(v_normal);
     vec3 light_direction = normalize(u_light.position - v_frag_pos);

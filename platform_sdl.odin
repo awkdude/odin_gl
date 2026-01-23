@@ -88,11 +88,13 @@ set_gamepad_rumble_sdl :: proc(weak, strong: f32) {
     }
 }
 
-handle_events :: proc() { // {{{
+handle_events :: proc() { 
+// {{{
     sdl_event: sdl.Event
     window_event: Maybe(util.Window_Event)
     drop_files: [dynamic]string
     for sdl.PollEvent(&sdl_event) {
+        // TODO: Set source_window for all events
         #partial switch sdl_event.type {
         case .KEY_DOWN, .KEY_UP: {
             window_event = util.Window_Event {
@@ -121,6 +123,7 @@ handle_events :: proc() { // {{{
             }
             window_event = util.Window_Event {
                 type=.Mouse_Button,
+                source_window=sdl.GetWindowFromID(sdl_event.button.windowID),
                 mouse_button={
                     button=mouse_button,
                     pressed=sdl_event.button.down,
@@ -178,9 +181,11 @@ handle_events :: proc() { // {{{
             src.game_handle_event( event)
         }
     }
-} // }}}
+// }}}
+} 
 
-handle_platform_command_sdl :: proc(command: util.Platform_Command) { // {{{
+handle_platform_command_sdl :: proc(command: util.Platform_Command) {
+// {{{
     #partial switch command.type {
     case .Change_Window_Icon:
         path_cstr := strings.unsafe_string_to_cstring(command.path)
@@ -195,7 +200,8 @@ handle_platform_command_sdl :: proc(command: util.Platform_Command) { // {{{
     case .Rename_Window:
         sdl.SetWindowTitle(sdl_window, strings.unsafe_string_to_cstring(command.title))
     }
-} // }}}
+// }}}
+}
 
 get_gamepad_state_sdl :: proc() -> (util.Gamepad_State, bool) { // {{{
     if sdl_gamepad == nil {

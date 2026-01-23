@@ -19,6 +19,7 @@ import "base:intrinsics"
 import mu "vendor:microui"
 
 USE_QUATERNIONS :: false
+USE_MICROUI     :: true
 
 vec2    :: util.vec2
 vec2f   :: [2]f32
@@ -87,7 +88,7 @@ Game_Context :: struct {
     rumble_end_tick: Maybe(time.Tick),
     frame_index: int,
     running: bool,
-    mu_ctx: mu.Context,
+    ui: UI_Context,
     dbgui_context: dbgui.Context,
     cull_front_face: bool,
     renderbuffer: u32,
@@ -109,16 +110,16 @@ game_init :: proc(I: util.Game_Init) -> bool {
     game.input = &game._inputs[0]
     game.old_input = &game._inputs[1]
     gl.load_up_to(3, 3, I.gl_set_proc_address)
-    DBGUI_FONT_PATH :: "resources/fonts/CASKAYDIACOVENERDFONT-REGULAR.TTF"
-    when true {
+    GUI_FONT_PATH :: "resources/fonts/CASKAYDIACOVENERDFONT-REGULAR.TTF"
+    when !USE_MICROUI {
         dbgui.context_init(
             &game.dbgui_context,
-            DBGUI_FONT_PATH,
+            GUI_FONT_PATH,
             20,
             game.api.get_window_dpi(),
         )
     } else {
-        mu.init(&game.mu_ctx)
+        ui_init(&game.ui, GUI_FONT_PATH)
     }
     game.api.push_platform_command(util.Platform_Command {
         type=.Change_Window_Icon,
@@ -231,40 +232,52 @@ game_update_render :: proc(_U: util.Game_Update) -> bool {
     gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT)
     // gl.ActiveTexture(gl.TEXTURE0)
     // gl.BindTexture(gl.TEXTURE_2D, find_resource(Texture, "diffuse").id)
-    dbgui.begin(&dbgui_context, {window_size=window_size}, input)
     scene_update_render(&game.scene)
     // TODO: rename _parent to _treenode
-    dbgui.text(dbgui.ID("frame_count"), "Frame Index: %v", frame_index)
-    // dbgui.text(GEN_ID, "This is another string with %v", math.PI)
-    max_texture_units: i32
-    gl.GetIntegerv(gl.MAX_TEXTURE_IMAGE_UNITS, &max_texture_units)
-    dbgui.text(GEN_ID, "Max texture units: %v", max_texture_units)
-    camera_ent := find_entity_with_component(.Camera)
-    fov_deg: f32 = camera_ent.camera.fov * DEG_PER_RAD
-    dbgui.slider(GEN_ID, "FOV", &fov_deg, FOV_MIN, FOV_MAX)
-    dbgui.text(GEN_ID, "FOV: %.2f", fov_deg)
-    camera_ent.camera.fov = fov_deg * RAD_PER_DEG
-    // for i in 0..<20 {
-    //     buf: [8]u8
-    //     label := fmt.bprintf(buf[:], "%v", i)
-    //     dbgui.text(GEN_ID, label)
-    // }
-    light_ent := find_entity_with_component(.Light)
-    dbgui.begin_treenode(GEN_ID, "Light color")
-    dbgui.slider(GEN_ID, "R", &light_ent.light.color.r, 0.0, 1.0, dbgui.color_red)
-    dbgui.slider(GEN_ID, "G", &light_ent.light.color.g, 0.0, 1.0, dbgui.color_green)
-    dbgui.slider(GEN_ID, "B", &light_ent.light.color.b, 0.0, 1.0, dbgui.color_blue)
-    dbgui.end_treenode()
-    dbgui.end()
-    // mu.begin(&mu_ctx)
-    // mu.begin_window(&mu_ctx, "My Window", mu.Rect{10, 10, 200, 200})
-    // mu.layout_row(&mu_ctx, []i32{60, -1})
-    // mu.label(&mu_ctx, "Hello, World!")
-    // if .SUBMIT in mu.button(&mu_ctx, "Button") {
-    //     log.debug("microui button was pressed")
-    // }
-    // mu.end_window(&mu_ctx)
-    // mu.end(&mu_ctx)
+    when !USE_MICROUI {
+        dbgui.begin(&dbgui_context, {window_size=window_size}, input)
+        dbgui.text(dbgui.ID("frame_count"), "Frame Index: %v", frame_index)
+        // dbgui.text(GEN_ID, "This is another string with %v", math.PI)
+        max_texture_units: i32
+        gl.GetIntegerv(gl.MAX_TEXTURE_IMAGE_UNITS, &max_texture_units)
+        dbgui.text(GEN_ID, "Max texture units: %v", max_texture_units)
+        camera_ent := find_entity_with_component(.Camera)
+        fov_deg: f32 = camera_ent.camera.fov * DEG_PER_RAD
+        dbgui.slider(GEN_ID, "FOV", &fov_deg, FOV_MIN, FOV_MAX)
+        dbgui.text(GEN_ID, "FOV: %.2f", fov_deg)
+        camera_ent.camera.fov = fov_deg * RAD_PER_DEG
+        light_ent := find_entity_with_component(.Light)
+        dbgui.begin_treenode(GEN_ID, "Light color")
+        dbgui.slider(GEN_ID, "R", &light_ent.light.color.r, 0.0, 1.0, dbgui.color_red)
+        dbgui.slider(GEN_ID, "G", &light_ent.light.color.g, 0.0, 1.0, dbgui.color_green)
+        dbgui.slider(GEN_ID, "B", &light_ent.light.color.b, 0.0, 1.0, dbgui.color_blue)
+        dbgui.end_treenode()
+        dbgui.end()
+    } else {
+        mu.begin(&ui.mu_ctx)
+        if mu.begin_window(&ui.mu_ctx, "Window", mu.Rect{10, 50, 400, 400}) {
+            mu.layout_row(&ui.mu_ctx, []i32{60, -1})
+            mu.label(&ui.mu_ctx, "Hello, World!")
+            light_ent := find_entity_with_component(.Light)
+            if mu.begin_treenode(&ui.mu_ctx, "Light color") != {} {
+                scroll_base_color := ui.mu_ctx.style.colors[.SCROLL_BASE]
+                // defer ui.mu_ctx.style.colors[.SCROLL_BASE] = scroll_base_color
+                ui.mu_ctx.style.colors[.SCROLL_BASE] = color4f_to_4b(dbgui.color_red)
+                mu.slider(&ui.mu_ctx, &light_ent.light.color.r, 0.0, 1.0, fmt_string = "R: %.2f")
+                ui.mu_ctx.style.colors[.SCROLL_BASE] = color4f_to_4b(dbgui.color_green)
+                mu.slider(&ui.mu_ctx, &light_ent.light.color.g, 0.0, 1.0, fmt_string = "G: %.2f")
+                ui.mu_ctx.style.colors[.SCROLL_BASE] = color4f_to_4b(dbgui.color_blue)
+                mu.slider(&ui.mu_ctx, &light_ent.light.color.b, 0.0, 1.0, fmt_string = "B: %.2f")
+                mu.end_treenode(&ui.mu_ctx)
+            }
+            if .SUBMIT in mu.button(&ui.mu_ctx, "Button") {
+                log.debug("microui button was pressed")
+            }
+            mu.end_window(&ui.mu_ctx)
+        }
+        mu.end(&ui.mu_ctx)
+        ui_render(&ui, window_size)
+    }
     // DELETE:
     old_input.transient = {}
     // FIXME:
@@ -381,7 +394,12 @@ translate_from_input :: proc(scene: ^Scene, transform: ^Transform) {
 game_handle_event :: proc(event: util.Window_Event) { 
 // {{{
     using game
-    dbgui.context_handle_event(&dbgui_context, event)
+    when USE_MICROUI {
+        ui_handle_event(&ui, event)
+    } else {
+        dbgui.context_handle_event(&dbgui_context, event)
+    }
+
     #partial switch event.type {
     case .Key:
         if event.key.pressed {
@@ -394,6 +412,11 @@ game_handle_event :: proc(event: util.Window_Event) {
             } else if event.key.keycode == util.KEY_E {
                 for &entity in game.scene.entities.arr {
                     entity.transform = entity.reset_transform
+                }
+            } else if event.key.keycode == util.KEY_TAB {
+                microui_window := mu.get_container(&ui.mu_ctx, "Window")
+                if microui_window != nil {
+                    microui_window.open = !microui_window.open
                 }
             } else if input_is_key_chord_down({util.KEY_LCONTROL, util.KEY_C}) {
                 cull_front_face = !cull_front_face 

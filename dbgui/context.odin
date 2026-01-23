@@ -62,8 +62,6 @@ Context :: struct {
     control_pools: [2]Control_Pool_Type,
     old_pool, current_pool: ^Control_Pool_Type,
     window_size: util.vec2,
-    ft_lib: ft.Library,
-    ft_face: ft.Face,
     vao, vbo: u32,
     depth: f32,
     char_map: map[rune]Character,
@@ -109,13 +107,6 @@ Parent_Info :: struct {
 
 current_context: ^Context
 
-Font_Error :: enum {
-    None,
-    File_Not_Found,
-    Out_Of_Memory,
-    Invalid,
-}
-
 Character :: struct {
     tex_id: u32,
     size, bearing: vec2f,
@@ -156,6 +147,7 @@ advance_pen :: proc(rect: Rectf, indent: f32 = 1.0) {
     control_union_rect.h += rect.h + padding.y
 }
 
+
 render_layout :: proc() {
 // {{{
     using current_context
@@ -176,14 +168,7 @@ render_layout :: proc() {
         }
     // }}}
     }
-    projection_mat := linalg.matrix_ortho3d(
-        0.0,
-        cast(f32)window_size.x,
-        cast(f32)window_size.y,
-        0.0,
-        -1.0,
-        1.0
-    )
+    projection_mat := util.projection_mat_from_window_size(window_size)
     renderer_begin_frame(&renderer, projection_mat)
     if sa.len(current_pool^) > 0 {
         render_control(sa.get_ptr(current_pool, 0))
@@ -281,24 +266,25 @@ set_font :: proc(
     clear(&ctx.char_map)
     display_dpi := display_dpi if display_dpi != 0 else 96
     font_size_dip := math.clamp(font_size_dip, MIN_FONT_SIZE_DIP, MAX_FONT_SIZE_DIP)
-    err: Font_Error
-    assert(ft.init_free_type(&ctx.ft_lib) == .Ok, "Could not init FreeType")
-    defer ft.done_free_type(ctx.ft_lib)
+    ft_lib: ft.Library
+    ft_face: ft.Face
+    assert(ft.init_free_type(&ft_lib) == .Ok, "Could not init FreeType")
+    defer ft.done_free_type(ft_lib)
     log.assertf(
         ft.new_face(
-            ctx.ft_lib,
+            ft_lib,
             strings.unsafe_string_to_cstring(font_path),
             0,
-            &ctx.ft_face,
+            &ft_face,
         ) == .Ok,
         "Could not create font face with font path '%s'",
         font_path
     )
-    defer ft.done_face(ctx.ft_face)
+    defer ft.done_face(ft_face)
     char_height := cast(ft.F26Dot6)(cast(f32)font_size_dip * (72.0 / 96.0))
     log.assertf(
         ft.set_char_size(
-            ctx.ft_face,
+            ft_face,
             0,
             char_height << 6,
             cast(u32)display_dpi, 
@@ -307,40 +293,39 @@ set_font :: proc(
         "Could not set font size to %vpt",
         char_height
     )
-    add_glyph := proc(ctx: ^Context, c: rune) {
+    add_glyph := proc(ctx: ^Context, ft_face: ft.Face, c: rune) {
         // {{{
         if c in ctx.char_map do return
         log.assertf(
-            ft.load_char(ctx.ft_face, cast(u32)c, {.Render}) == .Ok,
+            ft.load_char(ft_face, cast(u32)c, {.Render}) == .Ok,
             "Could not load glyph of %c",
             c
         )
         tex_id := util.create_texture_from_pixmap(util.Pixmap {
-            pixels=ctx.ft_face.glyph.bitmap.buffer,
-            w=cast(i32)ctx.ft_face.glyph.bitmap.width,
-            h=cast(i32)ctx.ft_face.glyph.bitmap.rows,
+            pixels=ft_face.glyph.bitmap.buffer,
+            w=cast(i32)ft_face.glyph.bitmap.width,
+            h=cast(i32)ft_face.glyph.bitmap.rows,
             bytes_per_pixel=1,
-            
         })
         ctx.char_map[c] = Character {
             tex_id=tex_id,
             size={
-                cast(f32)ctx.ft_face.glyph.bitmap.width,
-                cast(f32)ctx.ft_face.glyph.bitmap.rows
+                cast(f32)ft_face.glyph.bitmap.width,
+                cast(f32)ft_face.glyph.bitmap.rows
             },
             bearing={
-                cast(f32)ctx.ft_face.glyph.bitmap_left,
-                cast(f32)ctx.ft_face.glyph.bitmap_top
+                cast(f32)ft_face.glyph.bitmap_left,
+                cast(f32)ft_face.glyph.bitmap_top
             },
-            advance=cast(i32)ctx.ft_face.glyph.advance.x,
+            advance=cast(i32)ft_face.glyph.advance.x,
         }
         //}}}
     }
     for c in 0x20..=0x7e {
-        add_glyph(ctx, cast(rune)c)
+        add_glyph(ctx, ft_face, cast(rune)c)
     }
-    add_glyph(ctx, ARROW_RIGHT_RUNE)
-    add_glyph(ctx, ARROW_DOWN_RUNE)
+    add_glyph(ctx, ft_face, ARROW_RIGHT_RUNE)
+    add_glyph(ctx, ft_face, ARROW_DOWN_RUNE)
     ctx.font_path = font_path
     ctx.font_size_dip = font_size_dip
 // }}}

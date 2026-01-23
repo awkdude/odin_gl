@@ -207,7 +207,7 @@ scene_update_render :: proc(using scene: ^Scene) {
     )
     t := cast(f32)time.duration_seconds(time.tick_since({}))
     b := math.sin(t * 2.0) * 0.5 + 0.5
-    light_ent.light.color.b = b
+    // light_ent.light.color.b = b
     for entity, idx in entities.arr {
         source_shader, shader_ok := find_resource(util.Source_Shader, entity.shader)
         assert(shader_ok)

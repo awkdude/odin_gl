@@ -5,6 +5,7 @@ import "core:slice"
 import "core:log"
 import "odinlib:util"
 import gl "vendor:OpenGL"
+import "core:math/linalg"
 
 Color4f :: [4]f32
 Rectf :: util.Rectf
@@ -135,6 +136,10 @@ renderer_begin_frame :: proc(using renderer: ^Renderer, u_proj: mat4) {
 renderer_end_frame :: proc(using renderer: ^Renderer) {
     gl.Disable(gl.CULL_FACE)
     defer gl.Enable(gl.CULL_FACE)
+    gl.Disable(gl.DEPTH_TEST)
+    defer gl.Enable(gl.DEPTH_TEST)
+    gl.Enable(gl.SCISSOR_TEST)
+    defer gl.Disable(gl.SCISSOR_TEST)
     gl.UseProgram(source_shader.program)
     for tex_id, i in sa.slice(&textures) {
         gl.ActiveTexture(cast(u32)(gl.TEXTURE0 + i))
