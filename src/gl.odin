@@ -156,7 +156,7 @@ draw_model :: proc(model: ^Model, shader: u32) {
     }
 }
 
-load_texture :: proc(path: string) -> (u32, bool) {
+load_texture :: proc(path: string) -> (u32, bool) #optional_ok {
     tex_pixmap, ok := file_load.load_png(path)
     if !ok do return 0, false
     tex_data := tex_pixmap.pixels

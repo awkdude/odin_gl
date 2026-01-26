@@ -1,3 +1,5 @@
+#+ignore
+
 package dbgui
 
 import sa "core:container/small_array"

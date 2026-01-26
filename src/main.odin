@@ -1,7 +1,6 @@
 package src
 
 import "odinlib:util"
-import "../dbgui"
 import "core:log"
 import "core:math"
 import "core:time"
@@ -19,7 +18,6 @@ import "base:intrinsics"
 import mu "vendor:microui"
 
 USE_QUATERNIONS :: false
-USE_MICROUI     :: true
 
 vec2    :: util.vec2
 vec2f   :: [2]f32
@@ -37,7 +35,6 @@ FOV_MAX     :: 90.0 * RAD_PER_DEG
 
 ID_Type :: int
 NIL_ID: ID_Type : -1
-GEN_ID :: dbgui.GEN_ID
 
 game: ^Game_Context
 
@@ -89,7 +86,6 @@ Game_Context :: struct {
     frame_index: int,
     running: bool,
     ui: UI_Context,
-    dbgui_context: dbgui.Context,
     cull_front_face: bool,
     renderbuffer: u32,
     renderbuffer_tex_id: u32,
@@ -111,16 +107,7 @@ game_init :: proc(I: util.Game_Init) -> bool {
     game.old_input = &game._inputs[1]
     gl.load_up_to(3, 3, I.gl_set_proc_address)
     GUI_FONT_PATH :: "resources/fonts/CASKAYDIACOVENERDFONT-REGULAR.TTF"
-    when !USE_MICROUI {
-        dbgui.context_init(
-            &game.dbgui_context,
-            GUI_FONT_PATH,
-            20,
-            game.api.get_window_dpi(),
-        )
-    } else {
-        ui_init(&game.ui, GUI_FONT_PATH)
-    }
+    ui_init(&game.ui, GUI_FONT_PATH)
     game.api.push_platform_command(util.Platform_Command {
         type=.Change_Window_Icon,
         path="resources/opengl_logo.ico",
@@ -130,7 +117,7 @@ game_init :: proc(I: util.Game_Init) -> bool {
         size=util.vec2{400, 400},
     })
     game.window_size = I.window_size
-    game.clear_color = dbgui.color_coral
+    game.clear_color = color_coral
     gl.Viewport(0, 0, I.window_size.x, I.window_size.y)
     gl.Enable(gl.DEPTH_TEST)
     game.scene.entities = make_collection(Entity, 32)
@@ -215,6 +202,7 @@ game_update_render :: proc(_U: util.Game_Update) -> bool {
         game_shutdown()
         return false
     }
+    defer free_all(context.temp_allocator)
     frame_index += 1
     game.U = _U
 
@@ -233,60 +221,53 @@ game_update_render :: proc(_U: util.Game_Update) -> bool {
     // gl.ActiveTexture(gl.TEXTURE0)
     // gl.BindTexture(gl.TEXTURE_2D, find_resource(Texture, "diffuse").id)
     scene_update_render(&game.scene)
+    process_ui()
     // TODO: rename _parent to _treenode
-    when !USE_MICROUI {
-        dbgui.begin(&dbgui_context, {window_size=window_size}, input)
-        dbgui.text(dbgui.ID("frame_count"), "Frame Index: %v", frame_index)
-        // dbgui.text(GEN_ID, "This is another string with %v", math.PI)
-        max_texture_units: i32
-        gl.GetIntegerv(gl.MAX_TEXTURE_IMAGE_UNITS, &max_texture_units)
-        dbgui.text(GEN_ID, "Max texture units: %v", max_texture_units)
-        camera_ent := find_entity_with_component(.Camera)
-        fov_deg: f32 = camera_ent.camera.fov * DEG_PER_RAD
-        dbgui.slider(GEN_ID, "FOV", &fov_deg, FOV_MIN, FOV_MAX)
-        dbgui.text(GEN_ID, "FOV: %.2f", fov_deg)
-        camera_ent.camera.fov = fov_deg * RAD_PER_DEG
-        light_ent := find_entity_with_component(.Light)
-        dbgui.begin_treenode(GEN_ID, "Light color")
-        dbgui.slider(GEN_ID, "R", &light_ent.light.color.r, 0.0, 1.0, dbgui.color_red)
-        dbgui.slider(GEN_ID, "G", &light_ent.light.color.g, 0.0, 1.0, dbgui.color_green)
-        dbgui.slider(GEN_ID, "B", &light_ent.light.color.b, 0.0, 1.0, dbgui.color_blue)
-        dbgui.end_treenode()
-        dbgui.end()
-    } else {
-        mu.begin(&ui.mu_ctx)
-        if mu.begin_window(&ui.mu_ctx, "Window", mu.Rect{10, 50, 400, 400}) {
-            mu.layout_row(&ui.mu_ctx, []i32{60, -1})
-            mu.label(&ui.mu_ctx, "Hello, World!")
-            light_ent := find_entity_with_component(.Light)
-            if mu.begin_treenode(&ui.mu_ctx, "Light color") != {} {
-                scroll_base_color := ui.mu_ctx.style.colors[.SCROLL_BASE]
-                // defer ui.mu_ctx.style.colors[.SCROLL_BASE] = scroll_base_color
-                ui.mu_ctx.style.colors[.SCROLL_BASE] = color4f_to_4b(dbgui.color_red)
-                mu.slider(&ui.mu_ctx, &light_ent.light.color.r, 0.0, 1.0, fmt_string = "R: %.2f")
-                ui.mu_ctx.style.colors[.SCROLL_BASE] = color4f_to_4b(dbgui.color_green)
-                mu.slider(&ui.mu_ctx, &light_ent.light.color.g, 0.0, 1.0, fmt_string = "G: %.2f")
-                ui.mu_ctx.style.colors[.SCROLL_BASE] = color4f_to_4b(dbgui.color_blue)
-                mu.slider(&ui.mu_ctx, &light_ent.light.color.b, 0.0, 1.0, fmt_string = "B: %.2f")
-                mu.end_treenode(&ui.mu_ctx)
-            }
-            if .SUBMIT in mu.button(&ui.mu_ctx, "Button") {
-                log.debug("microui button was pressed")
-            }
-            mu.end_window(&ui.mu_ctx)
-        }
-        mu.end(&ui.mu_ctx)
-        ui_render(&ui, window_size)
-    }
     // DELETE:
     old_input.transient = {}
     // FIXME:
     // game.input, game.old_input = game.old_input, game.input
     input.transient = {}
-    free_all(context.temp_allocator)
     return true
 // }}}
 } 
+
+process_ui :: proc() {
+// {{{
+    using game
+    mu.begin(&ui.mu_ctx)
+    defer mu.end(&ui.mu_ctx)
+    if mu.begin_window(&ui.mu_ctx, "Window", mu.Rect{10, 50, 400, 400}) {
+        defer mu.end_window(&ui.mu_ctx)
+        mu.layout_row(&ui.mu_ctx, []i32{60, -1})
+        mu.label(&ui.mu_ctx, "Hello, World!")
+        light_ent := find_entity_with_component(.Light)
+        if mu.begin_treenode(&ui.mu_ctx, "Light color") != {} {
+            scroll_base_color := ui.mu_ctx.style.colors[.SCROLL_BASE]
+            // defer ui.mu_ctx.style.colors[.SCROLL_BASE] = scroll_base_color
+            ui.mu_ctx.style.colors[.SCROLL_BASE] = color4f_to_4b(color_red)
+            mu.slider(&ui.mu_ctx, &light_ent.light.color.r, 0.0, 1.0, fmt_string = "R: %.2f")
+            ui.mu_ctx.style.colors[.SCROLL_BASE] = color4f_to_4b(color_green)
+            mu.slider(&ui.mu_ctx, &light_ent.light.color.g, 0.0, 1.0, fmt_string = "G: %.2f")
+            ui.mu_ctx.style.colors[.SCROLL_BASE] = color4f_to_4b(color_blue)
+            mu.slider(&ui.mu_ctx, &light_ent.light.color.b, 0.0, 1.0, fmt_string = "B: %.2f")
+            if .CHANGE in mu.checkbox(&ui.mu_ctx, "Cull front face", &cull_front_face) {
+                gl.CullFace(gl.FRONT if cull_front_face else gl.BACK)
+            }
+            mu.end_treenode(&ui.mu_ctx)
+        }
+        camera_ent := find_entity_with_component(.Camera)
+        fov_deg := camera_ent.camera.fov * DEG_PER_RAD
+        mu.slider(&ui.mu_ctx, &fov_deg, 45.0, 90.0, 2.0, fmt_string = "FOV: %.2f")
+        camera_ent.camera.fov = fov_deg * RAD_PER_DEG
+        camera_ent.camera.fov = math.clamp(camera_ent.camera.fov , FOV_MIN, FOV_MAX)
+        if .SUBMIT in mu.button(&ui.mu_ctx, "Button") {
+            log.debug("microui button was pressed")
+        }
+    }
+    ui_render(&ui, window_size)
+// }}}
+}
 
 control_object :: proc(ent: ^Entity) {
     translate_from_input(&game.scene, &ent.transform)
@@ -325,12 +306,6 @@ control_camera :: proc(camera_ent: ^Entity) {
     pitch = math.clamp(pitch, -PITCH_ANGLE, PITCH_ANGLE)
     // camera_ent.orientation[AXIS_YAW] += (input.gamepad.axes[.Left_Y])
     // camera_ent.orientation[AXIS_PITCH] += (input.gamepad.axes[.Right_Y])
-    // TODO: Use in dbgui
-    if U.is_gamepad_connected {
-        camera_ent.camera.fov -= input.gamepad.axes[.Trigger_Left] * RAD_PER_DEG * 2.0
-        camera_ent.camera.fov += input.gamepad.axes[.Trigger_Right] * RAD_PER_DEG * 2.0
-    }
-    camera_ent.camera.fov = math.clamp(camera_ent.camera.fov , FOV_MIN, FOV_MAX)
     // log.debugf(
     //     "PITCH: %v, YAW: %v, FOV: %v",
     //     camera_ent.orientation[AXIS_PITCH] * DEG_PER_RAD,
@@ -394,10 +369,10 @@ translate_from_input :: proc(scene: ^Scene, transform: ^Transform) {
 game_handle_event :: proc(event: util.Window_Event) { 
 // {{{
     using game
-    when USE_MICROUI {
+    if !running do return
+    if window := mu.get_container(&ui.mu_ctx, "Window"); window != nil && window.open {
         ui_handle_event(&ui, event)
-    } else {
-        dbgui.context_handle_event(&dbgui_context, event)
+        return
     }
 
     #partial switch event.type {
@@ -419,8 +394,6 @@ game_handle_event :: proc(event: util.Window_Event) {
                     microui_window.open = !microui_window.open
                 }
             } else if input_is_key_chord_down({util.KEY_LCONTROL, util.KEY_C}) {
-                cull_front_face = !cull_front_face 
-                gl.CullFace(gl.FRONT if cull_front_face else gl.BACK)
             }
         } else {
             util.bit_modify(input.keys_released[:], cast(uint)event.key.keycode, true)

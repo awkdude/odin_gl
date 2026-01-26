@@ -1,3 +1,4 @@
+#+ignore
 package dbgui
 
 color_white   :: Color4f{1.000, 1.000, 1.000, 1.0}

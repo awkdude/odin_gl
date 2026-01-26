@@ -1,14 +1,16 @@
 package src
 
 import "core:strings"
-import "../dbgui"
 import "odinlib:util"
 import "core:log"
 import "core:math"
 import "core:unicode/utf8"
 import mu "vendor:microui"
 import ft "odinlib:freetype"
+import stbtt "vendor:stb/truetype"
 import gl "vendor:OpenGL"
+
+// TODO: Use stb/truetype instead
 
 Rectf :: util.Rectf
 
@@ -20,21 +22,15 @@ Character :: struct {
 
 Font_Context :: struct {
     char_map: map[rune]Character,
+    baked_char_map: map[rune]stbtt.bakedchar,
     font_path: string,
     font_size_px: i32,
 }
 
 UI_Context :: struct {
     mu_ctx: mu.Context,
-    renderer: dbgui.Renderer,
+    renderer: Renderer,
     font_context: Font_Context,
-    // window_resize_mouse_start: vec2,
-    // window_resize_corner: Maybe(enum {
-    //     TL,
-    //     TR,
-    //     BL,
-    //     BR,
-    // })
 }
 
 CORNER_SIZE: i32 : 20
@@ -42,29 +38,30 @@ CORNER_SIZE: i32 : 20
 ui_init :: proc(ui: ^UI_Context, font_path: string) {
 // {{{
     mu.init(&ui.mu_ctx)
-    assert(dbgui.renderer_init(&ui.renderer))
+    assert(renderer_init(&ui.renderer))
     set_font(&ui.font_context, font_path, ui.mu_ctx.style.size.y)
     ui.mu_ctx.style.font = cast(mu.Font)&ui.font_context
     ui.mu_ctx.text_width = microui_get_text_width
     ui.mu_ctx.text_height = microui_get_text_height
     ui.mu_ctx.style.colors[.WINDOW_BG].a = 0x90
+    unknown_tex_id := load_texture("resources/textures/microui/unknown.png")
 // }}}
 }
 
 ui_render :: proc(using ui: ^UI_Context, window_size: vec2) {
 // {{{
     pcm: ^mu.Command
-    dbgui.renderer_begin_frame(
+    renderer_begin_frame(
         &renderer,
         util.projection_mat_from_window_size(window_size)
     )
-    defer dbgui.renderer_end_frame(&renderer)
+    defer renderer_end_frame(&renderer)
     for command in mu.next_command_iterator(&mu_ctx, &pcm) {
         switch cmd in command {
         case ^mu.Command_Jump:
             unimplemented("No jump")
         case ^mu.Command_Clip:
-            dbgui.renderer_flush(&renderer)
+            renderer_flush(&renderer)
             gl.Scissor(
                 cmd.rect.x,
                 window_size.y - (cmd.rect.y - cmd.rect.h),
@@ -72,50 +69,92 @@ ui_render :: proc(using ui: ^UI_Context, window_size: vec2) {
                 cmd.rect.h
             )
         case ^mu.Command_Rect:
-            dbgui.renderer_push_quad(
+            renderer_push_quad(
                 &renderer,
                 rect_to_f(cmd.rect),
-                color4b_to_f(cmd.color),
+                color4b_to_4f(cmd.color),
             )
-            dbgui.renderer_flush(&renderer)
+            renderer_flush(&renderer)
         case ^mu.Command_Text:
-            when true {
             draw_text(
                 ui,
                 vec2f{cast(f32)cmd.pos.x, cast(f32)cmd.pos.y},
                 cmd.str,
-                color4b_to_f(cmd.color)
+                color4b_to_4f(cmd.color)
             )
-            }
         case ^mu.Command_Icon:
-        }
-        // log.debug(command)
-    }
-    microui_window := mu.get_container(&ui.mu_ctx, "Window")
-    if microui_window != nil {
-        if microui_window.open {
-            // Top left
-            dbgui.renderer_push_outline_rect(
-                &renderer,
-                rect_to_centered(mu.Rect {
-                    microui_window.rect.x,
-                    microui_window.rect.y,
-                    CORNER_SIZE,
-                    CORNER_SIZE,
-                }),
-                dbgui.color_magenta,
-            )
-            // Bottom left
-            dbgui.renderer_push_outline_rect(
-                &renderer,
-                rect_to_centered(mu.Rect {
-                    microui_window.rect.x,
-                    microui_window.rect.y+microui_window.rect.h,
-                    CORNER_SIZE,
-                    CORNER_SIZE,
-                }),
-                dbgui.color_magenta,
-            )
+        // render icons {{{
+            switch cmd.id {
+            case .NONE:
+            case .CHECK: 
+                renderer_push_line_ndc(
+                    &renderer,
+                    {-0.25, 0.25},
+                    {0.25, -0.25},
+                    2.0,
+                    color4b_to_4f(cmd.color),
+                    rect_to_f(cmd.rect)
+                )
+                renderer_push_line_ndc(
+                    &renderer,
+                    {-0.25, -0.25},
+                    {0.25, 0.25},
+                    2.0,
+                    color4b_to_4f(cmd.color),
+                    rect_to_f(cmd.rect)
+                )
+            case .CLOSE: 
+                renderer_push_line_ndc(
+                    &renderer,
+                    {-0.5, -0.5},
+                    {0.5, 0.5},
+                    2.0,
+                    color4b_to_4f(cmd.color),
+                    rect_to_f(cmd.rect)
+                )
+                renderer_push_line_ndc(
+                    &renderer,
+                    {-0.5, 0.5},
+                    {0.5, -0.5},
+                    2.0,
+                    color4b_to_4f(cmd.color),
+                    rect_to_f(cmd.rect)
+                )
+            case .COLLAPSED:
+                renderer_push_tri_ndc(
+                    &renderer,
+                    {
+                        {-0.5, -0.5},
+                        {-0.5, 0.5},
+                        {0.5, 0.0},
+                    },
+                    color4b_to_4f(cmd.color),
+                    rect_to_f(cmd.rect)
+                )
+            case .EXPANDED:
+                renderer_push_tri_ndc(
+                    &renderer,
+                    {
+                        {-0.5, -0.5},
+                        {0.0, 0.5},
+                        {0.5, -0.5},
+                    },
+                    color4b_to_4f(cmd.color),
+                    rect_to_f(cmd.rect)
+                )
+            case .RESIZE:
+                renderer_push_tri_ndc(
+                    &renderer,
+                    {
+                        {-1.0, 1.0},
+                        {1.0, 1.0},
+                        {1.0, -1.0},
+                    },
+                    color4b_to_4f(cmd.color),
+                    rect_to_f(cmd.rect)
+                )
+            }
+            // }}}
         }
     }
 // }}}
@@ -162,21 +201,6 @@ ui_handle_event :: proc(using ui: ^UI_Context, event: util.Window_Event) {
             }
         }
     case .Mouse_Button:
-        // microui_window := mu.get_container(&mu_ctx, "Window")
-        // if microui_window != nil {
-        //     top_left_rect := util.Rect {
-        //         microui_window.rect.x,
-        //         microui_window.rect.y,
-        //         CORNER_SIZE,
-        //         CORNER_SIZE,
-        //     }
-        //     if event.mouse_button.button == .Left {
-        //        if util.point_in_rect(event.mouse_button.position, top_left_rect) {
-        //            window_resize_mouse_start = event.mouse_button.position
-        //            window_resize_corner = .TL
-        //        }
-        //     }
-        // }
         mu_button: Maybe(mu.Mouse)
         #partial switch event.mouse_button.button {
         case .Left:   mu_button = .LEFT
@@ -262,7 +286,7 @@ draw_text :: proc(
             h=ch.size.y,
         }
         offset.y = min(offset.y, rect.y)
-        dbgui.renderer_push_quad(&renderer, rect, color, ch.tex_id)
+        renderer_push_quad(&renderer, rect, color, ch.tex_id)
         // NOTE: I'm not sure why this extra push_quad is here
         // renderer_push_quad(&renderer, rect, text_color)
         pen.x += cast(f32)(ch.advance >> 6)
@@ -370,7 +394,7 @@ color4f_to_4b :: proc(color: Color4f) -> mu.Color {
     }
 }
 
-color4b_to_f :: proc(color: mu.Color) -> Color4f {
+color4b_to_4f :: proc(color: mu.Color) -> Color4f {
     return Color4f {
         cast(f32)color.r / 255.0,
         cast(f32)color.g / 255.0,

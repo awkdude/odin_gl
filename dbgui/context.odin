@@ -1,3 +1,4 @@
+#+ignore
 package dbgui
 
 import "odinlib:util"
