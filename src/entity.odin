@@ -45,6 +45,7 @@ Component_Type :: enum {
 }
 
 Entity :: struct {
+    name: string,
     using transform: Transform,
     reset_transform: Transform, 
     using components: struct {

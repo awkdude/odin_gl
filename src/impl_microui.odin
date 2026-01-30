@@ -3,7 +3,9 @@ package src
 import "core:strings"
 import "odinlib:util"
 import "core:log"
+import "core:fmt"
 import "core:math"
+import "core:os"
 import "core:unicode/utf8"
 import mu "vendor:microui"
 import ft "odinlib:freetype"
@@ -14,37 +16,54 @@ import gl "vendor:OpenGL"
 
 Rectf :: util.Rectf
 
-Character :: struct {
-    tex_id: u32,
-    size, bearing: vec2f,
-    advance: i32,
-}
-
-Font_Context :: struct {
-    char_map: map[rune]Character,
-    baked_char_map: map[rune]stbtt.bakedchar,
-    font_path: string,
-    font_size_px: i32,
-}
-
 UI_Context :: struct {
     mu_ctx: mu.Context,
     renderer: Renderer,
-    font_context: Font_Context,
+    font_data: []u8,
+    packedchar_array: [96]stbtt.packedchar,
+    font_info: stbtt.fontinfo,
+    atlas_pixmap: util.Pixmap,
+    atlas_tex_id: u32,
+    font_path: string,
+    font_size_px: i32,
 }
-
-CORNER_SIZE: i32 : 20
 
 ui_init :: proc(ui: ^UI_Context, font_path: string) {
 // {{{
     mu.init(&ui.mu_ctx)
     assert(renderer_init(&ui.renderer))
-    set_font(&ui.font_context, font_path, ui.mu_ctx.style.size.y)
-    ui.mu_ctx.style.font = cast(mu.Font)&ui.font_context
+    ui.font_size_px = ui.mu_ctx.style.size.y
+    success: bool
+    ui.font_data, success = os.read_entire_file_from_filename(font_path)
+    assert(success, "Font load error")
+    assert(stbtt.InitFont(&ui.font_info, raw_data(ui.font_data[:]), 0) == true)
+    ui.atlas_pixmap = util.make_pixmap(512, 512, 1)
+    pack_context: stbtt.pack_context
+    stbtt.PackBegin(
+        &pack_context,
+        cast([^]u8)ui.atlas_pixmap.pixels,
+        ui.atlas_pixmap.w,
+        ui.atlas_pixmap.h,
+        0,
+        1,
+        nil
+    )
+    stbtt.PackSetOversampling(&pack_context, 4, 4)
+    stbtt.PackFontRange(
+        &pack_context,
+        raw_data(ui.font_data[:]),
+        0,
+        -cast(f32)ui.mu_ctx.style.size.y * 1.5,
+        32,
+        96,
+        raw_data(ui.packedchar_array[:])
+    )
+    stbtt.PackEnd(&pack_context)
+    ui.atlas_tex_id = util.create_texture_from_pixmap(ui.atlas_pixmap)
+    ui.mu_ctx.style.font = cast(mu.Font)ui
     ui.mu_ctx.text_width = microui_get_text_width
     ui.mu_ctx.text_height = microui_get_text_height
     ui.mu_ctx.style.colors[.WINDOW_BG].a = 0x90
-    unknown_tex_id := load_texture("resources/textures/microui/unknown.png")
 // }}}
 }
 
@@ -241,27 +260,61 @@ microui_get_text_width :: proc(font: mu.Font, str: string) -> i32 {
 // {{{
     width: f32
     max_height: f32
-    pen_x: f32
-    font_ctx := cast(^Font_Context)font
+    pen_x: f32 = 0.0
+    ui := cast(^UI_Context)font
     for r in str { 
-        ch, ok := font_ctx.char_map[r] // TODO: or_continue
-        log.assertf(ok, "Could not get width of '{0:c} ({0:d})'", r)
-        // rect := Rectf {
-        //     x=pen.x + ch.bearing.x,
-        //     y=pen.y - ch.bearing.y,
-        //     w=ch.size.x,
-        //     h=ch.size.y,
-        // }
-        // offset.y = min(offset.y, rect.y)
-        pen_x += cast(f32)(ch.advance >> 6)
-        // max_height = max(max_height, ch.size.y + abs(ch.size.y - ch.bearing.y))
+        char_index := cast(i32)r - 32
+        pen_x += ui.packedchar_array[char_index].xadvance
     }
     return cast(i32)math.round(pen_x)
 // }}}
 }
 
+ui_color_slider_group :: proc(
+    mu_ctx: ^mu.Context,
+    color: ^Color3f,
+    label: string) -> mu.Result_Set
+{
+    result: mu.Result_Set
+    if .ACTIVE in mu.begin_treenode(mu_ctx, label) {
+        result += mu.slider(mu_ctx, &color.r, 0.0, 1.0, fmt_string = "R: %.2f")
+        result += mu.slider(mu_ctx, &color.g, 0.0, 1.0, fmt_string = "G: %.2f")
+        result += mu.slider(mu_ctx, &color.b, 0.0, 1.0, fmt_string = "B: %.2f")
+        mu.end_treenode(mu_ctx)
+    }
+    return result
+}
+
+ui_textf :: proc(mu_ctx: ^mu.Context, fmt_string: string, args: ..any) {
+    text := fmt.tprintf(fmt_string, args)
+    mu.text(mu_ctx, text)
+}
+
+ui_radio_group :: proc(
+    mu_ctx: ^mu.Context,
+    label: string,
+    radio_labels: []string,
+    selected: ^i32
+) -> mu.Result_Set
+{
+// {{{
+    result: mu.Result_Set
+    if .ACTIVE in mu.begin_treenode(mu_ctx, label) {
+        for radio_label, i in radio_labels {
+            b := cast(i32)i == selected^
+            result += mu.checkbox(mu_ctx, radio_label, &b) 
+            if b {
+                selected^ = cast(i32)i
+            }
+        }
+        mu.end_treenode(mu_ctx)
+    }
+    return result
+// }}}
+}
+
 microui_get_text_height :: proc(font: mu.Font) -> i32 {
-    return (cast(^Font_Context)font).font_size_px
+    return (cast(^UI_Context)font).font_size_px
 }
 
 draw_text :: proc(
@@ -271,109 +324,48 @@ draw_text :: proc(
     color: Color4f) 
 {
 // {{{
-    width: f32
-    max_height: f32
     offset := offset
     pen := offset
-    // TODO: Fix y position of text!
-    for r in text {
-        ch, ok := font_context.char_map[r] // TODO: or_continue
-        log.assertf(ok, "Could not print '{0:c} ({0:d})'", r)
-        rect := Rectf {
-            x=pen.x + ch.bearing.x,
-            y=cast(f32)ui.mu_ctx.style.size.y / 2.0 + (pen.y - ch.bearing.y),
-            w=ch.size.x,
-            h=ch.size.y,
-        }
-        offset.y = min(offset.y, rect.y)
-        renderer_push_quad(&renderer, rect, color, ch.tex_id)
-        // NOTE: I'm not sure why this extra push_quad is here
-        // renderer_push_quad(&renderer, rect, text_color)
-        pen.x += cast(f32)(ch.advance >> 6)
-        max_height = max(max_height, ch.size.y + abs(ch.size.y - ch.bearing.y))
-    }
-    // return Rectf {
-    //     x=offset.x,
-    //     y=offset.y,
-    //     w=pen.x-offset.x,
-    //     h=max_height,
-    // }
-// }}} 
-}
+    ascent, descent, line_gap: i32
+    stbtt.GetFontVMetrics(&ui.font_info, &ascent, &descent, &line_gap)
+    scale := stbtt.ScaleForPixelHeight(&font_info, cast(f32)ui.font_size_px)
+    scaled_ascent := cast(f32)ascent * scale
+    baseline_y := pen.y + (cast(f32)(ascent - descent + line_gap) * scale)
 
-set_font :: proc(
-    ctx: ^Font_Context,
-    font_path: string,
-    font_size_px: i32)
-{
-// {{{
-    for _, ch in ctx.char_map {
-        tex_id := ch.tex_id
-        gl.DeleteTextures(1, &tex_id)
-    }
-    clear(&ctx.char_map)
-    font_size_px := math.clamp(font_size_px , 10, 100)
-    ft_lib: ft.Library
-    ft_face: ft.Face
-    assert(ft.init_free_type(&ft_lib) == .Ok, "Could not init FreeType")
-    defer ft.done_free_type(ft_lib)
-    log.assertf(
-        ft.new_face(
-            ft_lib,
-            strings.unsafe_string_to_cstring(font_path),
-            0,
-            &ft_face,
-        ) == .Ok,
-        "Could not create font face with font path '%s'",
-        font_path
-    )
-    defer ft.done_face(ft_face)
-    char_height := cast(u32)font_size_px
-    log.assertf(
-        ft.set_pixel_sizes(
-            ft_face,
-            0, // NOTE: I don't know if this needs to be set
-            char_height,
-        ) == .Ok,
-        "Could not set font size to %vpx",
-        char_height
-    )
-    add_glyph := proc(ctx: ^Font_Context, ft_face: ft.Face, c: rune) {
-        // {{{
-        if c in ctx.char_map do return
-        log.assertf(
-            ft.load_char(ft_face, cast(u32)c, {.Render}) == .Ok,
-            "Could not load glyph of %c",
-            c
+    for r in text {
+        ch := cast(i32)r - 32
+        assert(ch >= 0 && ch <= 96)
+        // if ch < 0 || ch > 96 do continue
+        quad: stbtt.aligned_quad
+        x, y: f32
+        stbtt.GetPackedQuad(
+            raw_data(packedchar_array[:]),
+            atlas_pixmap.w,
+            atlas_pixmap.h,
+            ch,
+            &pen.x,
+            &baseline_y,
+            &quad,
+            true
         )
-        tex_id := util.create_texture_from_pixmap(util.Pixmap {
-            pixels=ft_face.glyph.bitmap.buffer,
-            w=cast(i32)ft_face.glyph.bitmap.width,
-            h=cast(i32)ft_face.glyph.bitmap.rows,
-            bytes_per_pixel=1,
-        })
-        ctx.char_map[c] = Character {
-            tex_id=tex_id,
-            size={
-                cast(f32)ft_face.glyph.bitmap.width,
-                cast(f32)ft_face.glyph.bitmap.rows
+        renderer_push_quad(
+            &renderer,
+            {
+                quad.x0,
+                quad.y0,
+                quad.x1-quad.x0,
+                quad.y1-quad.y0,
             },
-            bearing={
-                cast(f32)ft_face.glyph.bitmap_left,
-                cast(f32)ft_face.glyph.bitmap_top
-            },
-            advance=cast(i32)ft_face.glyph.advance.x,
-        }
-        //}}}
+            color,
+            atlas_tex_id,
+            {
+                {quad.s0, quad.t0},
+                {quad.s1, quad.t1},
+            }
+        )
+        // pen.x += ui.packedchar_array[ch].xadvance
     }
-    for c in 0x20..=0x7e {
-        add_glyph(ctx, ft_face, cast(rune)c)
-    }
-    // add_glyph(ctx, ft_face, ARROW_RIGHT_RUNE)
-    // add_glyph(ctx, ft_face, ARROW_DOWN_RUNE)
-    ctx.font_path = font_path
-    ctx.font_size_px =font_size_px 
-// }}}
+// }}} 
 }
 
 rect_to_f :: proc(rect: mu.Rect) -> Rectf {

@@ -86,9 +86,11 @@ Game_Context :: struct {
     frame_index: int,
     running: bool,
     ui: UI_Context,
+    mu_window: ^mu.Container,
     cull_front_face: bool,
     renderbuffer: u32,
     renderbuffer_tex_id: u32,
+    selected: i32,
 }
 
 game_init :: proc(I: util.Game_Init) -> bool { 
@@ -106,7 +108,7 @@ game_init :: proc(I: util.Game_Init) -> bool {
     game.input = &game._inputs[0]
     game.old_input = &game._inputs[1]
     gl.load_up_to(3, 3, I.gl_set_proc_address)
-    GUI_FONT_PATH :: "resources/fonts/CASKAYDIACOVENERDFONT-REGULAR.TTF"
+    GUI_FONT_PATH :: "resources/fonts/CourierPrime-Regular.ttf"
     ui_init(&game.ui, GUI_FONT_PATH)
     game.api.push_platform_command(util.Platform_Command {
         type=.Change_Window_Icon,
@@ -236,25 +238,14 @@ process_ui :: proc() {
 // {{{
     using game
     mu.begin(&ui.mu_ctx)
-    defer mu.end(&ui.mu_ctx)
-    if mu.begin_window(&ui.mu_ctx, "Window", mu.Rect{10, 50, 400, 400}) {
-        defer mu.end_window(&ui.mu_ctx)
+    if mu.begin_window(&ui.mu_ctx, "Window", mu.Rect{0, 0, window_size.x/2, window_size.y/2}) {
+        mu_window = mu.get_current_container(&ui.mu_ctx)
         mu.layout_row(&ui.mu_ctx, []i32{60, -1})
         mu.label(&ui.mu_ctx, "Hello, World!")
         light_ent := find_entity_with_component(.Light)
-        if mu.begin_treenode(&ui.mu_ctx, "Light color") != {} {
-            scroll_base_color := ui.mu_ctx.style.colors[.SCROLL_BASE]
-            // defer ui.mu_ctx.style.colors[.SCROLL_BASE] = scroll_base_color
-            ui.mu_ctx.style.colors[.SCROLL_BASE] = color4f_to_4b(color_red)
-            mu.slider(&ui.mu_ctx, &light_ent.light.color.r, 0.0, 1.0, fmt_string = "R: %.2f")
-            ui.mu_ctx.style.colors[.SCROLL_BASE] = color4f_to_4b(color_green)
-            mu.slider(&ui.mu_ctx, &light_ent.light.color.g, 0.0, 1.0, fmt_string = "G: %.2f")
-            ui.mu_ctx.style.colors[.SCROLL_BASE] = color4f_to_4b(color_blue)
-            mu.slider(&ui.mu_ctx, &light_ent.light.color.b, 0.0, 1.0, fmt_string = "B: %.2f")
-            if .CHANGE in mu.checkbox(&ui.mu_ctx, "Cull front face", &cull_front_face) {
-                gl.CullFace(gl.FRONT if cull_front_face else gl.BACK)
-            }
-            mu.end_treenode(&ui.mu_ctx)
+        ui_color_slider_group(&ui.mu_ctx, &light_ent.light.color, "Light Color")
+        if .CHANGE in mu.checkbox(&ui.mu_ctx, "Cull front face", &cull_front_face) {
+            gl.CullFace(gl.FRONT if cull_front_face else gl.BACK)
         }
         camera_ent := find_entity_with_component(.Camera)
         fov_deg := camera_ent.camera.fov * DEG_PER_RAD
@@ -264,7 +255,13 @@ process_ui :: proc() {
         if .SUBMIT in mu.button(&ui.mu_ctx, "Button") {
             log.debug("microui button was pressed")
         }
+
+        result := ui_radio_group(&ui.mu_ctx, "Letters", {"A", "B", "C", "D"}, &selected)
+        ui_textf(&ui.mu_ctx, "Selected: %v", selected)
+        log.debugf("Selected: %v [%v]", selected, result)
+        mu.end_window(&ui.mu_ctx)
     }
+    mu.end(&ui.mu_ctx)
     ui_render(&ui, window_size)
 // }}}
 }
@@ -370,10 +367,7 @@ game_handle_event :: proc(event: util.Window_Event) {
 // {{{
     using game
     if !running do return
-    if window := mu.get_container(&ui.mu_ctx, "Window"); window != nil && window.open {
-        ui_handle_event(&ui, event)
-        return
-    }
+    ui_handle_event(&ui, event) 
 
     #partial switch event.type {
     case .Key:
