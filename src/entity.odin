@@ -1,3 +1,4 @@
+#+feature using-stmt
 package src
 
 import gl "vendor:OpenGL"

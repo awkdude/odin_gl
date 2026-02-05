@@ -1,3 +1,4 @@
+#+feature using-stmt
 package src
 
 import "odinlib:util"
@@ -6,6 +7,7 @@ import "core:math"
 import "core:time"
 import "core:mem"
 import "core:slice"
+import "core:unicode/utf8"
 import "core:os"
 import "core:fmt"
 import "core:math/linalg"
@@ -256,9 +258,9 @@ process_ui :: proc() {
             log.debug("microui button was pressed")
         }
 
-        result := ui_radio_group(&ui.mu_ctx, "Letters", {"A", "B", "C", "D"}, &selected)
+        result := ui_radio_group(&ui.mu_ctx, "Entities", len(scene.entities.arr), &scene.controlled_ent_index)
+
         ui_textf(&ui.mu_ctx, "Selected: %v", selected)
-        log.debugf("Selected: %v [%v]", selected, result)
         mu.end_window(&ui.mu_ctx)
     }
     mu.end(&ui.mu_ctx)

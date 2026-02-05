@@ -1,3 +1,4 @@
+#+feature using-stmt
 package src
 
 import "core:strings"
@@ -8,7 +9,6 @@ import "core:math"
 import "core:os"
 import "core:unicode/utf8"
 import mu "vendor:microui"
-import ft "odinlib:freetype"
 import stbtt "vendor:stb/truetype"
 import gl "vendor:OpenGL"
 
@@ -275,6 +275,7 @@ ui_color_slider_group :: proc(
     color: ^Color3f,
     label: string) -> mu.Result_Set
 {
+// {{{
     result: mu.Result_Set
     if .ACTIVE in mu.begin_treenode(mu_ctx, label) {
         result += mu.slider(mu_ctx, &color.r, 0.0, 1.0, fmt_string = "R: %.2f")
@@ -283,6 +284,7 @@ ui_color_slider_group :: proc(
         mu.end_treenode(mu_ctx)
     }
     return result
+// }}}
 }
 
 ui_textf :: proc(mu_ctx: ^mu.Context, fmt_string: string, args: ..any) {
@@ -290,21 +292,41 @@ ui_textf :: proc(mu_ctx: ^mu.Context, fmt_string: string, args: ..any) {
     mu.text(mu_ctx, text)
 }
 
+Radio_Buttons :: union {
+    []string,
+    int,
+}
+
 ui_radio_group :: proc(
     mu_ctx: ^mu.Context,
     label: string,
-    radio_labels: []string,
-    selected: ^i32
+    radio_buttons: Radio_Buttons,
+    selected: ^int
 ) -> mu.Result_Set
 {
 // {{{
     result: mu.Result_Set
     if .ACTIVE in mu.begin_treenode(mu_ctx, label) {
-        for radio_label, i in radio_labels {
-            b := cast(i32)i == selected^
-            result += mu.checkbox(mu_ctx, radio_label, &b) 
-            if b {
-                selected^ = cast(i32)i
+        switch data in radio_buttons {
+        case []string:
+            for radio_label, i in data {
+                b := i == selected^
+                result += mu.checkbox(mu_ctx, radio_label, &b) 
+                if b {
+                    selected^ = i
+                }
+            }
+        case int:
+            for i in 0..<data {
+                b := i == selected^
+                radio_label := utf8.runes_to_string(
+                    []rune {'0' + cast(rune)i},
+                    context.temp_allocator
+                )
+                result += mu.checkbox(mu_ctx, radio_label, &b) 
+                if b {
+                    selected^ = i
+                }
             }
         }
         mu.end_treenode(mu_ctx)

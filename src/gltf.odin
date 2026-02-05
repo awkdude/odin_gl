@@ -15,8 +15,7 @@ load_scene_from_gltf :: proc(
     scene: ^Scene,
     path: string,
     scene_index: uint = 0,
-    allocator := context.allocator
-) -> Import_Error
+    allocator := context.allocator) -> Import_Error
 {
     allocator := allocator
     cgltf_options := cgltf.options {}
